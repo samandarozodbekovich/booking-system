@@ -1,0 +1,22 @@
+# Core
+Django>=5.2,<6.0
+psycopg[binary]>=3.2
+python-decouple>=3.0
+ 
+# API
+djangorestframework>=3.15
+djangorestframework-simplejwt>=5.3
+django-filter>=24.0
+drf-spectacular>=0.27
+ 
+# Background jobs (auto-cancel stale pending bookings, email reminders)
+celery>=5.4
+redis>=5.0
+ 
+# Server
+gunicorn>=22.0
+ 
+# Tests
+pytest>=8.0
+pytest-django>=4.8
+factory-boy>=3.3
