@@ -129,4 +129,12 @@ class TimeOff(models.Model):
         ]
 
     def __str__(self) -> str:
-        return f"{self.provider} off {self.period.lower} - {self.period.upper}"
+        return f"{self.provider} off {self.start} - {self.end}"
+
+    @property
+    def start(self):
+        return self.period.lower if self.period else None
+
+    @property
+    def end(self):
+        return self.period.upper if self.period else None

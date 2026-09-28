@@ -12,7 +12,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ("id", "email", "password", "first_name", "last_name", "phone")
+        fields = ("id", 'username',"email", "password", "first_name", "last_name", "phone")
         read_only_fields = ("id",)
         extra_kwargs = {"email": {"required":True}}
         
@@ -20,6 +20,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         value = value.strip().lower()
         if User.objects.filter(email__iexact=value).exists():
             raise serializers.ValidationError("A user with this email already exists.")
+        return value
+    
+    def validate_username(self, value:str) -> str:
+        value = value.strip()
+        if User.objects.filter(username__iexact=value).exists():
+            raise serializers.ValidationError("A user with this username already exists.")
         return value
     
     def validate(self, attrs):
