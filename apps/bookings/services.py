@@ -110,3 +110,89 @@ def create_booking(
             note="Created",
         )
     return booking
+
+
+CANCELLATION_WINDOW = timedelta(hours=2)
+
+
+class InvalidTransitionError(Exception):
+    """The status change conflicts with the booking's current state."""
+
+
+class BookingPermissionError(Exception):
+    """The user is not allowed to perform this status change."""
+
+
+def _check_actor(booking: Booking, to_status: str, actor) -> None:
+    is_admin = actor.is_business_admin
+    profile = getattr(actor, "provider_profile", None)
+    is_own_provider = profile is not None and profile.pk == booking.provider_id
+    is_own_customer = booking.customer_id == actor.pk
+
+    if to_status in (BookingStatus.CONFIRMED, BookingStatus.COMPLETED):
+        allowed = is_admin or is_own_provider
+    else:  
+        allowed = is_admin or is_own_provider or is_own_customer
+
+    if not allowed:
+        raise BookingPermissionError("You are not allowed to perform this action.")
+
+
+def _check_business_rules(booking: Booking, to_status: str, actor, now: datetime) -> None:
+    if to_status == BookingStatus.COMPLETED and now < booking.start:
+        raise InvalidTransitionError("A booking can't be completed before it starts.")
+
+    if to_status == BookingStatus.CANCELLED and booking.customer_id == actor.pk:
+        # The cancellation policy applies to customers only;
+        # providers and admins can cancel at any time.
+        if booking.start - now < CANCELLATION_WINDOW:
+            hours = int(CANCELLATION_WINDOW.total_seconds() // 3600)
+            raise InvalidTransitionError(
+                f"Bookings can't be cancelled less than {hours} hours before the start."
+            )
+
+
+def transition_booking(
+    *,
+    booking_id: int,
+    to_status: str,
+    actor,
+    note: str = "",
+    now: datetime | None = None,
+) -> Booking:
+    now = now or timezone.now()
+
+    # Release expired pending bookings first (own transaction), so an expired
+    # booking is already "cancelled" when we look at it below.
+    provider_id = Booking.objects.values_list("provider_id", flat=True).get(pk=booking_id)
+    expire_stale_pending_bookings(provider=provider_id, now=now)
+
+    with transaction.atomic():
+        # Lock the row: two parallel requests (e.g. confirm + cancel) are
+        # serialized, and the second one sees the result of the first.
+        booking = Booking.objects.select_for_update().get(pk=booking_id)
+
+        _check_actor(booking, to_status, actor)
+
+        if not booking.can_transition_to(to_status):
+            raise InvalidTransitionError(
+                f"Can't change status from '{booking.status}' to '{to_status}'."
+            )
+
+        _check_business_rules(booking, to_status, actor, now)
+
+        from_status = booking.status
+        booking.status = to_status
+        booking.expires_at = None  # only pending bookings have a deadline
+        if to_status == BookingStatus.CANCELLED:
+            booking.cancel_reason = note
+        booking.save(update_fields=["status", "expires_at", "cancel_reason", "updated_at"])
+
+        BookingStatusLog.objects.create(
+            booking=booking,
+            from_status=from_status,
+            to_status=to_status,
+            changed_by=actor,
+            note=note,
+        )
+    return booking

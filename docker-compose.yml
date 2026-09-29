@@ -1,0 +1,119 @@
+# Usage:
+#   docker compose up -d --build
+#   docker compose exec web python manage.py createsuperuser
+#   docker compose exec web pytest
+# Then open http://localhost:8080/api/swagger/
+
+x-app-env: &app-env
+  # Inside Docker the services are reached by their names, not "localhost"
+  DB_HOST: db
+  DB_PORT: "5432"
+  CELERY_BROKER_URL: redis://redis:6379/0
+  # nginx is published on port 8080, so the browser's Origin includes the port
+  CSRF_TRUSTED_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+
+x-app: &app
+  # One image shared by web, worker and beat (only web builds it)
+  image: booking-system:latest
+  pull_policy: never
+  env_file: .env
+  environment:
+    <<: *app-env
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  web:
+    <<: *app
+    build: .
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "1"
+    volumes:
+      - static_data:/app/staticfiles
+    expose:
+      - "8000"
+
+  worker:
+    <<: *app
+    command: celery -A config worker -l info
+
+  beat:
+    <<: *app
+    # The schedule file lives in /tmp: the app user can write there
+    command: celery -A config beat -l info --schedule /tmp/celerybeat-schedule
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "8080:80"
+      # ---------- SSL: uncomment after obtaining a certificate ----------
+      # - "443:443"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_data:/app/staticfiles:ro
+      # ---------- SSL ----------
+      # - certbot_conf:/etc/letsencrypt:ro
+      # - certbot_www:/var/www/certbot:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+    # ---------- SSL: reload nginx every 6 hours to pick up renewed certificates ----------
+    # command: /bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g "daemon off;"'
+
+  # ---------- SSL: Let's Encrypt certificates (certbot) ----------
+  # Steps (on a server with a public domain pointing to it):
+  #   1. Uncomment this service, the certbot volumes below and in nginx,
+  #      and the "acme-challenge" location in docker/nginx/default.conf.
+  #   2. docker compose up -d nginx
+  #   3. Get the certificate (replace the domain and email):
+  #        docker compose run --rm --entrypoint certbot certbot certonly --webroot \
+  #          -w /var/www/certbot -d example.com -d www.example.com \
+  #          --email you@example.com --agree-tos --no-eff-email
+  #   4. Uncomment the HTTPS server block and the redirect in docker/nginx/default.conf,
+  #      and port 443 above.
+  #   5. docker compose up -d   (and `docker compose exec nginx nginx -s reload`)
+  #   The service below renews certificates automatically every 12 hours.
+  #
+  # certbot:
+  #   image: certbot/certbot:latest
+  #   volumes:
+  #     - certbot_conf:/etc/letsencrypt
+  #     - certbot_www:/var/www/certbot
+  #   entrypoint: /bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h & wait $${!}; done'
+  #   restart: unless-stopped
+
+volumes:
+  postgres_data:
+  static_data:
+  # ---------- SSL ----------
+  # certbot_conf:
+  # certbot_www:

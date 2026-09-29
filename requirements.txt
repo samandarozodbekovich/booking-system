@@ -10,8 +10,7 @@ django-filter>=24.0
 drf-spectacular>=0.27
  
 # Background jobs (auto-cancel stale pending bookings, email reminders)
-celery>=5.4
-redis>=5.0
+celery[redis]>=5.4
  
 # Server
 gunicorn>=22.0

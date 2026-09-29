@@ -1,4 +1,4 @@
-from decouple import config
+from decouple import config, Csv
 from pathlib import Path
 from datetime import timedelta
 
@@ -8,8 +8,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config("SECRET_KEY")
 DEBUG = config("DEBUG", default=False, cast=bool)
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+CSRF_TRUSTED_ORIGINS = config("CSRF_TRUSTED_ORIGINS", default="", cast=Csv())
 
-ALLOWED_HOSTS = []
+# Django runs behind nginx
+USE_X_FORWARDED_HOST = True
 
 # Application definition
 
@@ -115,8 +118,6 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = "static/"
-
 AUTH_USER_MODEL = "accounts.User"
 
 # Default primary key field type
@@ -159,4 +160,29 @@ SPECTACULAR_SETTINGS = {
     "SERVE_AUTHENTICATION": [],
     "COMPONENT_SPLIT_REQUEST": True,
     "SWAGGER_UI_SETTINGS": {"persistAuthorization": True},
+    "ENUM_NAME_OVERRIDES": {"BookingStatusEnum": "apps.bookings.models.BookingStatus"},
 }
+
+
+# ---------- Celery ----------
+CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_TIMEZONE = "UTC"
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_BEAT_SCHEDULE = {
+    "expire-pending-bookings": {
+        "task": "apps.bookings.tasks.expire_pending_bookings",
+        "schedule": 60.0,  # seconds
+    },
+}
+
+
+STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+
+
+# ---------- SSL (uncomment when HTTPS is enabled in nginx) ----------
+# Trust nginx's X-Forwarded-Proto header to know the request came over HTTPS
+# SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+# Send session and CSRF cookies over HTTPS only
+# SESSION_COOKIE_SECURE = True
+# CSRF_COOKIE_SECURE = True
